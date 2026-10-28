@@ -6,10 +6,10 @@ import html2canvas from "html2canvas";
 
 /*
   Full Workshop Job Card app:
-  - KPL-### job numbers (persisted)
+  - KPL-### job numbers (assigned by the server, unique across all devices)
   - Save/Edit/Delete/View/Print/Export PDF
   - Technician & Inspector signatures (drawn on canvas, saved per-job)
-  - localStorage persistence (offline)
+  - shared online storage via /api/jobs (every device sees every job)
   - Search/filter list
 */
 
@@ -52,28 +52,59 @@ export default function App() {
   // refs for job DOM elements (for html2canvas)
   const jobRefs = useRef({});
 
-  // load jobs + jobCounter on start
-  useEffect(() => {
-    const raw = localStorage.getItem("jobs");
-    if (raw) {
-      try {
-        setJobs(JSON.parse(raw));
-      } catch (e) {
-        console.error("Cannot parse saved jobs", e);
-        setJobs([]);
-        localStorage.removeItem("jobs");
-      }
-    }
-    // ensure jobCounter exists
-    if (!localStorage.getItem("jobCounter")) {
-      localStorage.setItem("jobCounter", "0");
-    }
-  }, []);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState("");
 
-  // save jobs whenever changed
+  // fetch all jobs (from every device) from the shared server
+  const loadJobs = async () => {
+    try {
+      const res = await fetch("/api/jobs");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setJobs(await res.json());
+      setLoadError("");
+    } catch (e) {
+      console.error("Cannot load jobs", e);
+      setLoadError("Could not load jobs from the server. Check your internet connection.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // on start: upload any jobs left in this device's old local storage, then load the shared list
   useEffect(() => {
-    localStorage.setItem("jobs", JSON.stringify(jobs));
-  }, [jobs]);
+    const init = async () => {
+      const raw = localStorage.getItem("jobs");
+      if (raw) {
+        try {
+          const localJobs = JSON.parse(raw);
+          if (Array.isArray(localJobs) && localJobs.length) {
+            const res = await fetch("/api/jobs", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ import: localJobs }),
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          }
+          localStorage.removeItem("jobs");
+          localStorage.removeItem("jobCounter");
+        } catch (e) {
+          console.error("Cannot upload local jobs, will retry next time", e);
+        }
+      }
+      await loadJobs();
+    };
+    init();
+
+    // keep the list fresh so jobs recorded on other devices show up
+    const timer = setInterval(loadJobs, 15000);
+    const onFocus = () => loadJobs();
+    window.addEventListener("focus", onFocus);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, []);
 
   // helper: update form fields
   const handleChange = (e) => {
@@ -87,14 +118,6 @@ export default function App() {
     } else {
       setJob((p) => ({ ...p, [name]: value }));
     }
-  };
-
-  // job number generator (persistent counter)
-  const generateJobNumber = () => {
-    const raw = parseInt(localStorage.getItem("jobCounter") || "0", 10);
-    const next = raw + 1;
-    localStorage.setItem("jobCounter", String(next));
-    return `KPL-${String(next).padStart(3, "0")}`;
   };
 
   // signature helpers (draw on canvas)
@@ -150,7 +173,8 @@ export default function App() {
   };
 
   // save job (create or update)
-  const handleSave = () => {
+  const handleSave = async () => {
+    if (saving) return;
     // minimal required fields
     if (!job.customerName || !job.dateOfRepair) {
       alert("Please enter Customer Name and Date of Repair.");
@@ -161,27 +185,43 @@ export default function App() {
     const techSig = techCanvasRef.current?.toDataURL() || "";
     const inspSig = inspCanvasRef.current?.toDataURL() || "";
 
-    if (selectedJobId) {
-      // update existing
-      const updated = jobs.map((j) =>
-        j.id === selectedJobId ? { ...j, ...job, techSignature: techSig, inspSignature: inspSig } : j
-      );
-      setJobs(updated);
-      alert("✅ Job updated");
-    } else {
-      // new job
-      const jobNumber = generateJobNumber();
-      const newJob = {
-        ...job,
-        id: Date.now(),
-        jobNumber,
-        techSignature: techSig,
-        inspSignature: inspSig,
-        dateSaved: new Date().toLocaleString(),
-      };
-      setJobs((p) => [...p, newJob]);
-      alert(`✅ Job saved as ${jobNumber}`);
+    setSaving(true);
+    try {
+      if (selectedJobId) {
+        // update existing
+        const res = await fetch(`/api/jobs?id=${selectedJobId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...job, techSignature: techSig, inspSignature: inspSig }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const updated = await res.json();
+        setJobs((p) => p.map((j) => (j.id === updated.id ? updated : j)));
+        alert("✅ Job updated");
+      } else {
+        // new job: the server assigns the next job number so no two devices get the same one
+        const res = await fetch("/api/jobs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...job,
+            techSignature: techSig,
+            inspSignature: inspSig,
+            dateSaved: new Date().toLocaleString(),
+          }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const newJob = await res.json();
+        setJobs((p) => [...p, newJob]);
+        alert(`✅ Job saved as ${newJob.jobNumber}`);
+      }
+    } catch (e) {
+      console.error("Save failed", e);
+      alert("❌ Could not save the job. Check your internet connection and try again.");
+      setSaving(false);
+      return; // keep the form so nothing is lost
     }
+    setSaving(false);
 
     // clear form and canvases
     setJob({ ...initialJob });
@@ -238,10 +278,17 @@ export default function App() {
   };
 
   // delete
-  const handleDelete = (id) => {
-    if (!confirm("Delete this job card?")) return;
-    setJobs((p) => p.filter((j) => j.id !== id));
-    // do not decrement counter - numbers never repeat
+  const handleDelete = async (id) => {
+    if (!confirm("Delete this job card? It will be removed for all devices.")) return;
+    try {
+      const res = await fetch(`/api/jobs?id=${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setJobs((p) => p.filter((j) => j.id !== id));
+    } catch (e) {
+      console.error("Delete failed", e);
+      alert("❌ Could not delete the job. Check your internet connection.");
+    }
+    // numbers are never reused - the server sequence only moves forward
   };
 
   // print: open a new window with formatted HTML and call print
@@ -476,10 +523,16 @@ export default function App() {
                 Export Last
               </button>
               <button
-                onClick={() => {
-                  if (!confirm("Clear all saved jobs? This cannot be undone.")) return;
-                  setJobs([]);
-                  localStorage.removeItem("jobs");
+                onClick={async () => {
+                  if (!confirm("Clear ALL saved jobs for every device? This cannot be undone.")) return;
+                  try {
+                    const res = await fetch("/api/jobs?all=true", { method: "DELETE" });
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    setJobs([]);
+                  } catch (e) {
+                    console.error("Clear failed", e);
+                    alert("❌ Could not clear jobs. Check your internet connection.");
+                  }
                 }}
                 className="bg-red-500 text-white px-3 py-1 rounded text-sm"
               >
@@ -544,7 +597,7 @@ export default function App() {
           </div>
 
           <div className="mt-4 flex gap-3">
-            <button onClick={handleSave} className="bg-sky-700 text-white px-4 py-2 rounded"> {selectedJobId ? "Update Job" : "Save Job"} </button>
+            <button onClick={handleSave} disabled={saving} className="bg-sky-700 text-white px-4 py-2 rounded disabled:opacity-60"> {saving ? "Saving..." : selectedJobId ? "Update Job" : "Save Job"} </button>
             <button onClick={() => { setJob({ ...initialJob }); clearCanvas(techCanvasRef); clearCanvas(inspCanvasRef); setSelectedJobId(null); }} className="bg-gray-300 px-3 py-2 rounded"> Clear </button>
           </div>
         </div>
@@ -571,7 +624,10 @@ export default function App() {
 
         {/* jobs list */}
         <div className="bg-white rounded-xl shadow p-4">
-          {filteredJobs.length === 0 ? (
+          {loadError && <p className="text-red-600 mb-2">{loadError}</p>}
+          {loading ? (
+            <p className="text-gray-500">Loading job cards...</p>
+          ) : filteredJobs.length === 0 ? (
             <p className="text-gray-500">No job cards found.</p>
           ) : (
             <ul className="space-y-3">
