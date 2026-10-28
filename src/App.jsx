@@ -1,8 +1,6 @@
 // src/App.jsx
 import React, { useState, useEffect, useRef } from "react";
 import logo from "./kadolta-logo.png";
-import jsPDF from "jspdf";
-import html2canvas from "html2canvas";
 
 /*
   Full Workshop Job Card app:
@@ -12,6 +10,10 @@ import html2canvas from "html2canvas";
   - localStorage persistence (offline)
   - Search/filter list
 */
+
+// header logo served through Netlify Image CDN (resized + AVIF)
+const logoCdn = (w) =>
+  `/.netlify/images?url=${encodeURIComponent(logo)}&w=${w}&fm=avif&q=80`;
 
 const initialJob = {
   jobNumber: "",
@@ -404,6 +406,11 @@ export default function App() {
       wrapper.style.left = "-2000px";
       document.body.appendChild(wrapper);
 
+      // load the heavy PDF libraries only when an export is requested
+      const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
+        import("html2canvas"),
+        import("jspdf"),
+      ]);
       const canvas = await html2canvas(wrapper, { scale: 2, useCORS: true, backgroundColor: "#ffffff" });
       document.body.removeChild(wrapper);
 
@@ -447,7 +454,17 @@ export default function App() {
         {/* header */}
         <div className="bg-white rounded-xl shadow p-4 mb-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <img src={logo} alt="Kadolta" className="w-20" />
+            <img
+              src={logoCdn(160)}
+              srcSet={`${logoCdn(400)} 400w, ${logoCdn(800)} 800w, ${logoCdn(1200)} 1200w`}
+              sizes="80px"
+              width="80"
+              height="27"
+              fetchPriority="high"
+              decoding="async"
+              alt="Kadolta"
+              className="w-20 h-auto"
+            />
             <div>
               <div className="text-xl font-bold text-sky-800">Kadolta Packaging Ltd</div>
               <div className="text-sm text-gray-600">Professional Workshop & Technical Services</div>
