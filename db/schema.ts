@@ -1,0 +1,25 @@
+import { pgTable, serial, text, timestamp, jsonb } from "drizzle-orm/pg-core";
+
+export const jobs = pgTable("jobs", {
+  id: serial().primaryKey(),
+  jobNumber: text("job_number").notNull().unique(),
+  customerName: text("customer_name").notNull(),
+  dateOfRepair: text("date_of_repair").notNull(),
+  machineModel: text("machine_model").notNull().default(""),
+  serialNumber: text("serial_number").notNull().default(""),
+  typeOfWork: jsonb("type_of_work").$type<string[]>().notNull().default([]),
+  problemReported: text("problem_reported").notNull().default(""),
+  diagnosis: text().notNull().default(""),
+  jobDetails: text("job_details").notNull().default(""),
+  sparesUsed: text("spares_used").notNull().default(""),
+  comments: text().notNull().default(""),
+  customerComments: text("customer_comments").notNull().default(""),
+  technicians: text().notNull().default(""),
+  inspector: text().notNull().default(""),
+  startTime: text("start_time").notNull().default(""),
+  finishTime: text("finish_time").notNull().default(""),
+  techSignature: text("tech_signature").notNull().default(""),
+  inspSignature: text("insp_signature").notNull().default(""),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});

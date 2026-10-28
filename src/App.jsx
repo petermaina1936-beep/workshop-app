@@ -9,7 +9,7 @@ import html2canvas from "html2canvas";
   - KPL-### job numbers (persisted)
   - Save/Edit/Delete/View/Print/Export PDF
   - Technician & Inspector signatures (drawn on canvas, saved per-job)
-  - localStorage persistence (offline)
+  - Netlify Database persistence (via /api/jobs)
   - Search/filter list
 */
 
@@ -34,6 +34,19 @@ const initialJob = {
   inspSignature: "", // base64 image stored
 };
 
+// small fetch helper for the jobs API
+const api = async (url, options = {}) => {
+  const res = await fetch(url, {
+    ...options,
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `Request failed (${res.status})`);
+  }
+  return res.status === 204 ? null : res.json();
+};
+
 export default function App() {
   // state
   const [job, setJob] = useState({ ...initialJob });
@@ -52,28 +65,35 @@ export default function App() {
   // refs for job DOM elements (for html2canvas)
   const jobRefs = useRef({});
 
-  // load jobs + jobCounter on start
+  // load jobs from the database on start (importing any older browser-only jobs first)
   useEffect(() => {
-    const raw = localStorage.getItem("jobs");
-    if (raw) {
+    const load = async () => {
       try {
-        setJobs(JSON.parse(raw));
+        const raw = localStorage.getItem("jobs");
+        if (raw) {
+          let local = [];
+          try {
+            local = JSON.parse(raw) || [];
+          } catch (e) {
+            console.error("Cannot parse saved jobs", e);
+          }
+          for (const j of local) {
+            await api("/api/jobs", {
+              method: "POST",
+              body: JSON.stringify({ ...j, import: true }),
+            });
+          }
+          localStorage.removeItem("jobs");
+          localStorage.removeItem("jobCounter");
+        }
+        setJobs(await api("/api/jobs"));
       } catch (e) {
-        console.error("Cannot parse saved jobs", e);
-        setJobs([]);
-        localStorage.removeItem("jobs");
+        console.error(e);
+        alert("Could not load saved jobs: " + e.message);
       }
-    }
-    // ensure jobCounter exists
-    if (!localStorage.getItem("jobCounter")) {
-      localStorage.setItem("jobCounter", "0");
-    }
+    };
+    load();
   }, []);
-
-  // save jobs whenever changed
-  useEffect(() => {
-    localStorage.setItem("jobs", JSON.stringify(jobs));
-  }, [jobs]);
 
   // helper: update form fields
   const handleChange = (e) => {
@@ -87,14 +107,6 @@ export default function App() {
     } else {
       setJob((p) => ({ ...p, [name]: value }));
     }
-  };
-
-  // job number generator (persistent counter)
-  const generateJobNumber = () => {
-    const raw = parseInt(localStorage.getItem("jobCounter") || "0", 10);
-    const next = raw + 1;
-    localStorage.setItem("jobCounter", String(next));
-    return `KPL-${String(next).padStart(3, "0")}`;
   };
 
   // signature helpers (draw on canvas)
@@ -150,7 +162,7 @@ export default function App() {
   };
 
   // save job (create or update)
-  const handleSave = () => {
+  const handleSave = async () => {
     // minimal required fields
     if (!job.customerName || !job.dateOfRepair) {
       alert("Please enter Customer Name and Date of Repair.");
@@ -161,26 +173,28 @@ export default function App() {
     const techSig = techCanvasRef.current?.toDataURL() || "";
     const inspSig = inspCanvasRef.current?.toDataURL() || "";
 
-    if (selectedJobId) {
-      // update existing
-      const updated = jobs.map((j) =>
-        j.id === selectedJobId ? { ...j, ...job, techSignature: techSig, inspSignature: inspSig } : j
-      );
-      setJobs(updated);
-      alert("✅ Job updated");
-    } else {
-      // new job
-      const jobNumber = generateJobNumber();
-      const newJob = {
-        ...job,
-        id: Date.now(),
-        jobNumber,
-        techSignature: techSig,
-        inspSignature: inspSig,
-        dateSaved: new Date().toLocaleString(),
-      };
-      setJobs((p) => [...p, newJob]);
-      alert(`✅ Job saved as ${jobNumber}`);
+    const payload = { ...job, techSignature: techSig, inspSignature: inspSig };
+    try {
+      if (selectedJobId) {
+        // update existing
+        const saved = await api(`/api/jobs/${selectedJobId}`, {
+          method: "PUT",
+          body: JSON.stringify(payload),
+        });
+        setJobs((p) => p.map((j) => (j.id === selectedJobId ? saved : j)));
+        alert("✅ Job updated");
+      } else {
+        // new job (job number is assigned by the server)
+        const saved = await api("/api/jobs", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        setJobs((p) => [...p, saved]);
+        alert(`✅ Job saved as ${saved.jobNumber}`);
+      }
+    } catch (e) {
+      alert("❌ Could not save job: " + e.message);
+      return;
     }
 
     // clear form and canvases
@@ -238,10 +252,14 @@ export default function App() {
   };
 
   // delete
-  const handleDelete = (id) => {
+  const handleDelete = async (id) => {
     if (!confirm("Delete this job card?")) return;
-    setJobs((p) => p.filter((j) => j.id !== id));
-    // do not decrement counter - numbers never repeat
+    try {
+      await api(`/api/jobs/${id}`, { method: "DELETE" });
+      setJobs((p) => p.filter((j) => j.id !== id));
+    } catch (e) {
+      alert("❌ Could not delete job: " + e.message);
+    }
   };
 
   // print: open a new window with formatted HTML and call print
@@ -476,10 +494,14 @@ export default function App() {
                 Export Last
               </button>
               <button
-                onClick={() => {
+                onClick={async () => {
                   if (!confirm("Clear all saved jobs? This cannot be undone.")) return;
-                  setJobs([]);
-                  localStorage.removeItem("jobs");
+                  try {
+                    await api("/api/jobs", { method: "DELETE" });
+                    setJobs([]);
+                  } catch (e) {
+                    alert("❌ Could not clear jobs: " + e.message);
+                  }
                 }}
                 className="bg-red-500 text-white px-3 py-1 rounded text-sm"
               >

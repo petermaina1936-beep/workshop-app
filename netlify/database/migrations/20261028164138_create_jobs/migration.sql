@@ -1,0 +1,23 @@
+CREATE TABLE "jobs" (
+	"id" serial PRIMARY KEY,
+	"job_number" text NOT NULL UNIQUE,
+	"customer_name" text NOT NULL,
+	"date_of_repair" text NOT NULL,
+	"machine_model" text DEFAULT '' NOT NULL,
+	"serial_number" text DEFAULT '' NOT NULL,
+	"type_of_work" jsonb DEFAULT '[]' NOT NULL,
+	"problem_reported" text DEFAULT '' NOT NULL,
+	"diagnosis" text DEFAULT '' NOT NULL,
+	"job_details" text DEFAULT '' NOT NULL,
+	"spares_used" text DEFAULT '' NOT NULL,
+	"comments" text DEFAULT '' NOT NULL,
+	"customer_comments" text DEFAULT '' NOT NULL,
+	"technicians" text DEFAULT '' NOT NULL,
+	"inspector" text DEFAULT '' NOT NULL,
+	"start_time" text DEFAULT '' NOT NULL,
+	"finish_time" text DEFAULT '' NOT NULL,
+	"tech_signature" text DEFAULT '' NOT NULL,
+	"insp_signature" text DEFAULT '' NOT NULL,
+	"created_at" timestamp DEFAULT now() NOT NULL,
+	"updated_at" timestamp DEFAULT now() NOT NULL
+);
