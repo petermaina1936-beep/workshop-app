@@ -7,6 +7,10 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: "autoUpdate",
+      workbox: {
+        // never let the offline cache answer API calls - jobs must come from the server
+        navigateFallbackDenylist: [/^\/api\//],
+      },
       includeAssets: ["kadolta-logo.png"], // make sure your logo is in public folder
       manifest: {
         name: "Kadolta Packaging Ltd Job System",

@@ -1,0 +1,10 @@
+CREATE SEQUENCE job_number_seq START 1;
+
+CREATE TABLE jobs (
+  id SERIAL PRIMARY KEY,
+  job_number TEXT NOT NULL UNIQUE,
+  data JSONB NOT NULL DEFAULT '{}'::jsonb,
+  date_saved TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
