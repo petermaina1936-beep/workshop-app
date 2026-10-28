@@ -1,8 +1,6 @@
 // src/App.jsx
 import React, { useState, useEffect, useRef } from "react";
 import logo from "./kadolta-logo.png";
-import jsPDF from "jspdf";
-import html2canvas from "html2canvas";
 
 /*
   Full Workshop Job Card app:
@@ -12,6 +10,10 @@ import html2canvas from "html2canvas";
   - localStorage persistence (offline)
   - Search/filter list
 */
+
+// header logo served through Netlify Image CDN (resized + AVIF)
+const logoCdn = (w) =>
+  `/.netlify/images?url=${encodeURIComponent(logo)}&w=${w}&fm=avif&q=80`;
 
 const initialJob = {
   jobNumber: "",
@@ -113,13 +115,17 @@ export default function App() {
     const ctx = canvas.getContext("2d");
     drawingRef.current = true;
 
+    // keep receiving moves for this pointer even if the finger drifts off the pad
+    canvas.setPointerCapture?.(e.pointerId);
+
     const rect = canvas.getBoundingClientRect();
-    const getXY = (ev) => {
-      if (ev.touches && ev.touches.length) {
-        return { x: ev.touches[0].clientX - rect.left, y: ev.touches[0].clientY - rect.top };
-      }
-      return { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
-    };
+    // the canvas is scaled with CSS, so map screen coords to canvas pixels
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const getXY = (ev) => ({
+      x: (ev.clientX - rect.left) * scaleX,
+      y: (ev.clientY - rect.top) * scaleY,
+    });
 
     const start = getXY(e);
     ctx.lineWidth = 2.5;
@@ -130,6 +136,7 @@ export default function App() {
 
     const moveHandler = (ev) => {
       if (!drawingRef.current) return;
+      ev.preventDefault();
       const pt = getXY(ev);
       ctx.lineTo(pt.x, pt.y);
       ctx.stroke();
@@ -141,12 +148,12 @@ export default function App() {
       ctx.beginPath();
       canvas.removeEventListener("pointermove", moveHandler);
       canvas.removeEventListener("pointerup", upHandler);
-      canvas.removeEventListener("pointerleave", upHandler);
+      canvas.removeEventListener("pointercancel", upHandler);
     };
 
     canvas.addEventListener("pointermove", moveHandler);
     canvas.addEventListener("pointerup", upHandler);
-    canvas.addEventListener("pointerleave", upHandler);
+    canvas.addEventListener("pointercancel", upHandler);
   };
 
   // save job (create or update)
@@ -404,6 +411,11 @@ export default function App() {
       wrapper.style.left = "-2000px";
       document.body.appendChild(wrapper);
 
+      // load the heavy PDF libraries only when an export is requested
+      const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
+        import("html2canvas"),
+        import("jspdf"),
+      ]);
       const canvas = await html2canvas(wrapper, { scale: 2, useCORS: true, backgroundColor: "#ffffff" });
       document.body.removeChild(wrapper);
 
@@ -447,7 +459,17 @@ export default function App() {
         {/* header */}
         <div className="bg-white rounded-xl shadow p-4 mb-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <img src={logo} alt="Kadolta" className="w-20" />
+            <img
+              src={logoCdn(160)}
+              srcSet={`${logoCdn(400)} 400w, ${logoCdn(800)} 800w, ${logoCdn(1200)} 1200w`}
+              sizes="80px"
+              width="80"
+              height="27"
+              fetchPriority="high"
+              decoding="async"
+              alt="Kadolta"
+              className="w-20 h-auto"
+            />
             <div>
               <div className="text-xl font-bold text-sky-800">Kadolta Packaging Ltd</div>
               <div className="text-sm text-gray-600">Professional Workshop & Technical Services</div>
@@ -529,14 +551,14 @@ export default function App() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
             <div>
               <div className="font-semibold mb-2">Technician Signature</div>
-              <canvas ref={techCanvasRef} width={600} height={160} className="border rounded bg-white" onPointerDown={(e) => startDrawing(techCanvasRef, techDrawing, e)} />
+              <canvas ref={techCanvasRef} width={600} height={160} className="signature-pad border rounded bg-white" onPointerDown={(e) => startDrawing(techCanvasRef, techDrawing, e)} />
               <div className="flex gap-2 mt-2">
                 <button onClick={() => clearCanvas(techCanvasRef)} className="text-sm px-3 py-1 bg-gray-200 rounded">Clear</button>
               </div>
             </div>
             <div>
               <div className="font-semibold mb-2">Inspector Signature</div>
-              <canvas ref={inspCanvasRef} width={600} height={160} className="border rounded bg-white" onPointerDown={(e) => startDrawing(inspCanvasRef, inspDrawing, e)} />
+              <canvas ref={inspCanvasRef} width={600} height={160} className="signature-pad border rounded bg-white" onPointerDown={(e) => startDrawing(inspCanvasRef, inspDrawing, e)} />
               <div className="flex gap-2 mt-2">
                 <button onClick={() => clearCanvas(inspCanvasRef)} className="text-sm px-3 py-1 bg-gray-200 rounded">Clear</button>
               </div>
